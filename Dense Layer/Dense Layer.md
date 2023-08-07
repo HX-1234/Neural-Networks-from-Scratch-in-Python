@@ -24,11 +24,11 @@ plt.scatter(X[:,0],X[:,1],c=y,cmap='brg')
 plt.show()
 ~~~
 
-![image-20230806221844756](C:\Users\dtpw\AppData\Roaming\Typora\typora-user-images\image-20230806222228216.png)
+![image-20230806222228216](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308071220418.png)
 
 > X是300x2大小，y是300x1大小
 
-![image-20230806221844756](C:\Users\dtpw\AppData\Roaming\Typora\typora-user-images\image-20230806221844756.png)
+![image-20230806221844756](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308071218164.png)
 
 > 这是一个螺旋状数据，共三个类别。
 
@@ -57,4 +57,5 @@ dense.forward(X);
 print(dense.output[:5])
 ~~~
 
-![image-20230807111700067](C:\Users\dtpw\AppData\Roaming\Typora\typora-user-images\image-20230807111700067.png)
+![image-20230807111700067](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308071222988.png)
+
