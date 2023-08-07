@@ -139,7 +139,7 @@
      print(activation1.output[:5])
      ```
 
-​		![image-20230807201740972](C:\Users\dtpw\AppData\Roaming\Typora\typora-user-images\image-20230807201740972.png)
+​	![image-20230807202215791](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308072022825.png)
 
 
 
