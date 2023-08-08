@@ -20,7 +20,7 @@ class Layer_Dense:
     def forward(self, input):
         self.output = np.dot(input, self.weight) + self.bias
 
-class Activation_Sigmiod:
+class Activation_Softmax:
     def __init__(self):
         pass
 

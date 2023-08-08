@@ -41,9 +41,9 @@
          def __init__(self):
              pass
      
-         def forward(self, y_pred, y_ture):
+         def forward(self, y_pred, y_true):
              # 多少个样本
-             n_sample = len(y_ture)
+             n_sample = len(y_true)
      
              # 为了防止log(0)，所以以1e-7为左边界
              # 另一个问题是将置信度向1移动，即使是非常小的值，
@@ -51,11 +51,11 @@
              y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
      
              loss = - np.log(y_pred)
-             if len(y_ture.shape) == 2:# 标签是onehot的编码
-                 loss = loss * y_ture
-             elif len(y_ture.shape) == 1:# 只有一个类别标签
+             if len(y_true.shape) == 2:# 标签是onehot的编码
+                 loss = np.sum(loss * y_true,axis=1)
+             elif len(y_true.shape) == 1:# 只有一个类别标签
                  # 注意loss = loss[:, y_ture]是不一样的，这样会返回一个矩阵
-                 loss = loss[range(n_sample), y_ture]
+                 loss = loss[range(n_sample), y_true]
      
              return loss
      ```
