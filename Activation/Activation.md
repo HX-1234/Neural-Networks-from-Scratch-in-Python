@@ -18,7 +18,7 @@
 2. 实现
 
    ~~~py
-   class Activation_Softmax:
+   class Activation_Sigmoid:
        def __init__(self):
            pass
    
