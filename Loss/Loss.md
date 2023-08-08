@@ -101,3 +101,43 @@
 
 ![image-20230807220820346](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308072208379.png)
 
+### 三、Binary Cross-Entropy
+
+  1. 公式
+
+     ![image-20230808225158008](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308082251060.png)
+
+     > 由于一个模型可以包含多个二进制输出，而且每个输出都不像交叉熵损失那样输出每个类别的confidence，所以在单个输出上计算的损失将是一个损失向量，其中每个输出都包含一个值。与CategoricalCrossentropy最大的不同是：
+     >
+     > * CategoricalCrossentropy中的每个类别是互斥的，
+     > * Binary Cross-Entropy中二进制输出是互斥的，但多个二进制之间不互斥，
+     > * 例如：男女互斥，高矮互斥，但男女与高矮之间不互斥。
+
+  2. 实现
+
+     ```py
+     class Loss_BinaryCrossentropy(Loss):
+         def __init__(self):
+             pass
+     
+         def forward(self, y_pred, y_true):
+             # 多少个样本
+             n_sample = len(y_true)
+     
+             # 为了防止log(0)，所以以1e-7为左边界
+             # 另一个问题是将置信度向1移动，即使是非常小的值，
+             # 为了防止偏移，右边界为1 - 1e-7
+             y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+             loss = - y_true * np.log(y_pred) - (1 - y_true) * np.log(1 - y_pred)
+             # 这里的求平均和父类中的calculate求平均的维度不同
+             # 这里是对多对的二进制求平均
+             # calculate中的求平均是对每个样本可平均
+             loss = np.mean(loss, axis=-1)
+             
+             return loss
+     ```
+
+
+
+
+
