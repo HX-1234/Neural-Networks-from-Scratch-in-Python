@@ -25,8 +25,7 @@ $$
 \frac{\partial y}{\partial b} = 1
 $$
 
-> 其中$x$是输入向量，$w$是权重，$b$是偏置，$y$是Dense Layer层是输出向量，$b$和$w$已经在初始化时保存，所以在前向传播中要将$x$保存在Dense Layer的属性中，
-> **注意：$1$和$w$一样是一个矩阵 ，但大小不一样。**相关代码如下：
+> 其中$x$是输入向量，$w$是权重，$b$是偏置，$y$是Dense Layer层是输出向量，$b$和$w$已经在初始化时保存，所以在前向传播中要将$x$保存在Dense Layer的属性中，**注意：$1$和$w$一样是一个矩阵 ，但大小不一样。**相关代码如下：
 
 **实现**
 
@@ -106,7 +105,7 @@ y=\begin{cases}x,x > 0\\0,x \le 0\end{cases}
 $$
 
 $$
-\frac{dy}{dx}=\begin{cases}1,x > 0\\0,x < 0\end{cases}
+\frac{dy}{dx}=\begin{cases}1,x > 0 \\0,x < 0\end{cases}
 $$
 
 $$
@@ -236,9 +235,38 @@ $$
 >
 > 这里可以用矩阵计算，但有更简单的方法，实现如下：
 
+**实现**
+
 ```python
 def backward(self, dvalue):
     # 这里也可以用矩阵计算，但dinput、dvalue、output大小相同，
     # 可以直接按元素对应相乘。
     self.dinput = dvalue * self.output * ( 1 - self.output )
+```
+
+### 六、Binary Cross-Entropy loss
+
+**公式**
+
+![image-20230808232215931](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308082322975.png)
+
+> 其中，$j$是第$j$对二进制输出。
+
+![](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308082319747.png)
+
+**实现**
+
+```python
+def backward(self, y_pred, y_true):
+    # 样本个数
+    n_sample = len(y_true)
+    # 注意：BinaryCrossentropy之前都是Sigmoid函数
+    # Sigmoid函数很容易出现0和1的输出
+    # 所以以1e-7为左边界
+    # 另一个问题是将置信度向1移动，即使是非常小的值，
+    # 为了防止偏移，右边界为1 - 1e-7
+    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+    self.dinput = - y_true / y_pred + (1 - y_true) / (1 - y_pred)
+    # 每个样本除以n_sample，因为在优化的过程中要对样本求和
+    self.dinput = self.dinput / n_sample
 ```

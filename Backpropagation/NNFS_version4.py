@@ -170,8 +170,37 @@ class Loss_CategoricalCrossentropy(Loss):
         self.dinput = self.dinput / n_sample
 
 
+class Loss_BinaryCrossentropy(Loss):
+    def __init__(self):
+        pass
 
+    def forward(self, y_pred, y_true):
+        # 多少个样本
+        n_sample = len(y_true)
 
+        # 为了防止log(0)，所以以1e-7为左边界
+        # 另一个问题是将置信度向1移动，即使是非常小的值，
+        # 为了防止偏移，右边界为1 - 1e-7
+        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        loss = - y_true * np.log(y_pred) - (1 - y_true) * np.log(1 - y_pred)
+        # 这里的求平均和父类中的calculate求平均的维度不同
+        # 这里是对多对的二进制求平均
+        # calculate中的求平均是对每个样本可平均
+        loss = np.mean(loss, axis=-1)
+        return loss
+
+    def backward(self, y_pred, y_true):
+        # 样本个数
+        n_sample = len(y_true)
+        # 注意：BinaryCrossentropy之前都是Sigmoid函数
+        # Sigmoid函数很容易出现0和1的输出
+        # 所以以1e-7为左边界
+        # 另一个问题是将置信度向1移动，即使是非常小的值，
+        # 为了防止偏移，右边界为1 - 1e-7
+        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        self.dinput = - y_true / y_pred + (1 - y_true) / (1 - y_pred)
+        # 每个样本除以n_sample，因为在优化的过程中要对样本求和
+        self.dinput = self.dinput / n_sample
 
 # 生成数据
 X, y = spiral_data(samples=100, classes=3)
