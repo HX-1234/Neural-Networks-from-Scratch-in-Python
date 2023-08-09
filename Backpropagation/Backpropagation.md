@@ -203,7 +203,6 @@ $$
         self.dinput = np.empty_like(dvalue)
         # 对每个samlpe（每一行）循环
         for each, (single_output, single_dvalue) in enumerate(zip(self.output, dvalue)):
-            # 显然这两种计算法算到的dinput大小是一样的
             # 这里是(1xa) * (axa) = 1xa是行向量
             # 这里要先将1xa向量变为1xa矩阵
             # 因为向量没有转置（.T操作后还是与原来相同），
@@ -257,19 +256,31 @@ def backward(self, dvalue):
 
 ![](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308082319747.png)
 
+> 由于一个模型可以包含多个二进制输出，因此在单个输出上计算的损失将组成一个损失向量，其中每个输出都有一个值。需要的是一个样本损失，需要计算所有这些来自单个样本的损失的平均。
+
+![image-20230809130550709](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308091305753.png)
+
+![image-20230809130935346](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308091309417.png)
+
+![image-20230809131100610](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308091311670.png)
+
+
+
 **实现**
 
 ```python
-def backward(self, y_pred, y_true):
-    # 样本个数
-    n_sample = len(y_true)
-    # 注意：BinaryCrossentropy之前都是Sigmoid函数
-    # Sigmoid函数很容易出现0和1的输出
-    # 所以以1e-7为左边界
-    # 另一个问题是将置信度向1移动，即使是非常小的值，
-    # 为了防止偏移，右边界为1 - 1e-7
-    y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
-    self.dinput = - y_true / y_pred + (1 - y_true) / (1 - y_pred)
-    # 每个样本除以n_sample，因为在优化的过程中要对样本求和
-    self.dinput = self.dinput / n_sample
+    def backward(self, y_pred, y_true):
+        # 样本个数
+        n_sample = len(y_true)
+        # 有多少对二进制输出
+        n_output = len(y_pred[0])
+        # 注意：BinaryCrossentropy之前都是Sigmoid函数
+        # Sigmoid函数很容易出现0和1的输出
+        # 所以以1e-7为左边界
+        # 另一个问题是将置信度向1移动，即使是非常小的值，
+        # 为了防止偏移，右边界为1 - 1e-7
+        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        self.dinput = ( - y_true / y_pred + (1 - y_true) / (1 - y_pred) ) / n_output
+        # 每个样本除以n_sample，因为在优化的过程中要对样本求和
+        self.dinput = self.dinput / n_sample
 ```
