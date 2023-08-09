@@ -272,15 +272,21 @@ def backward(self, dvalue):
     def backward(self, y_pred, y_true):
         # 样本个数
         n_sample = len(y_true)
-        # 有多少对二进制输出
-        n_output = len(y_pred[0])
+        # 这里要特别注意，书上都没有写明
+        # 当只有一对二进制类别时，y_pred大小为(n_sample,1),y_ture大小为(n_sample,)
+        # (n_sample,)和(n_sample,1)一样都可以广播，只是(n_sample,)不能转置
+        # 所以下面的loss大小会变成(n_sample,n_sample)
+        # 当有二对二进制类别时，y_pred大小为(n_sample,2),y_ture大小为(n_sample,2)
+        if len(y_true.shape) == 1:  # y_true是个行向量
+            y_true = y_true.reshape(-1, 1)
         # 注意：BinaryCrossentropy之前都是Sigmoid函数
         # Sigmoid函数很容易出现0和1的输出
         # 所以以1e-7为左边界
         # 另一个问题是将置信度向1移动，即使是非常小的值，
         # 为了防止偏移，右边界为1 - 1e-7
         y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
-        self.dinput = ( - y_true / y_pred + (1 - y_true) / (1 - y_pred) ) / n_output
+        self.dinput = - y_true / y_pred + (1 - y_true) / (1 - y_pred)
         # 每个样本除以n_sample，因为在优化的过程中要对样本求和
         self.dinput = self.dinput / n_sample
+        
 ```

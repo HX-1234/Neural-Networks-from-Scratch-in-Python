@@ -2,6 +2,7 @@
 作者：黄欣
 日期：2023年08月08日
 """
+from timeit import timeit
 
 # 版本增加了Dense Layer、Activation Function和Loss的反向传播。
 
@@ -63,7 +64,7 @@ class Activation_Sigmoid:
 
         # input的大小是nx1，n是Activation输入的sample数量，每个sample只有一个维度。
         # 所以前一个hidden layer必须是Layer_Dense(n, 1)
-        self.output = 1 / ( 1 + np.exp(-input) )
+        self.output = 1 / ( 1 + np.exp(- (self.input) ) )
 
     def backward(self, dvalue):
         # 这里也可以用矩阵计算，但dinput、dvalue、output大小相同，
@@ -109,19 +110,21 @@ class Activation_Softmax:
         self.dinput = np.empty_like(dvalue)
         # 对每个samlpe（每一行）循环
         for each, (single_output, single_dvalue) in enumerate(zip(self.output, dvalue)):
+            # 显然这两种计算法算到的dinput大小是一样的
             # 这里是(1xa) * (axa) = 1xa是行向量
             # 这里要先将1xa向量变为1xa矩阵
             # 因为向量没有转置（.T操作后还是与原来相同），
             # np.dot接收到向量后，会调整向量的方向，但得到的还是向量（行向量）,就算得到列向量也会表示成行向量
             # np.dot接收到1xa矩阵后，要考虑前后矩阵大小的匹配，不然要报错,最后得到的还是矩阵
             single_output = single_output.reshape(1, -1)
-            jacobian_matrix = np.diagflat(single_output) - np.dot(single_output.T,single_output)
+            jacobian_matrix = np.diagflat(single_output) - np.dot(single_output.T, single_output)
             # 因为single_dvalue是行向量，dot运算会调整向量的方向
             # 所以np.dot(single_dvalue, jacobian_matrix)和np.dot(jacobian_matrix， single_dvalue)
             # 得到的都是一个行向量，但两都的计算方法不同，得到的值也不同
             # np.dot(jacobian_matrix, single_dvalue)也是对的，这样得到的才是行向量，
             # 而不是经过dot将列向量转置成行向量
             self.dinput[each] = np.dot(jacobian_matrix, single_dvalue)
+
 
 
 class Loss:
@@ -150,7 +153,7 @@ class Loss_CategoricalCrossentropy(Loss):
 
         loss = - np.log(y_pred)
         if len(y_true.shape) == 2:# 标签是onehot的编码
-            loss = np.sum(loss * y_true,axis=1)
+            loss = np.sum(loss * y_true, axis=1)
         elif len(y_true.shape) == 1:# 只有一个类别标签
             # 注意loss = loss[:, y_ture]是不一样的，这样会返回一个矩阵
             loss = loss[range(n_sample), y_true]
@@ -159,17 +162,32 @@ class Loss_CategoricalCrossentropy(Loss):
         # 这里不用求均值，父类中的calculate方法中求均值
         return loss
 
-    def backward(self, y_pred, y_true):
-        n_sample = len(y_true)
-        if len(y_true.shape) == 2:  # 标签是onehot的编码
-            label = y_true
-        elif len(y_true.shape) == 1:  # 只有一个类别标签
-            # 将标签改成onehot的编码
-            label = np.zeros((n_sample, len(y_pred[0])))
-            label[range(n_sample), y_true] = 1
-        self.dinput = - label / y_pred
-        # 每个样本除以n_sample，因为在优化的过程中要对样本求和
-        self.dinput = self.dinput / n_sample
+    # def backward(self, y_pred, y_true):
+    #     n_sample = len(y_true)
+    #     if len(y_true.shape) == 2:  # 标签是onehot的编码
+    #         label = y_true
+    #     elif len(y_true.shape) == 1:  # 只有一个类别标签
+    #         # 将标签改成onehot的编码
+    #         label = np.zeros((n_sample, len(y_pred[0])))
+    #         label[range(n_sample), y_true] = 1
+    #     self.dinput = - label / y_pred
+    #     # 每个样本除以n_sample，因为在优化的过程中要对样本求和
+    #     self.dinput = self.dinput / n_sample
+
+    def backward(self, dvalues, y_true):
+
+        # Number of samples
+        samples = len(dvalues)
+        # Number of labels in every sample
+        # We'll use the first sample to count them
+        labels = len(dvalues[0])
+        # If labels are sparse, turn them into one-hot vector
+        if len(y_true.shape) == 1:
+            y_true = np.eye(labels)[y_true]
+        # Calculate gradient
+        self.dinput = -y_true / dvalues
+        # Normalize gradient
+        self.dinput = self.dinput / samples
 
 
 class Loss_BinaryCrossentropy(Loss):
@@ -217,50 +235,128 @@ class Loss_BinaryCrossentropy(Loss):
         # 每个样本除以n_sample，因为在优化的过程中要对样本求和
         self.dinput = self.dinput / n_sample
 
-# 生成数据
-X, y = spiral_data(samples=100, classes=3)
-# 构建一个含三个神经元的Dense层实例
+class Activation_Softmax_Loss_CategoricalCrossentropy():
+    def __init__(self):
+        self.activation = Activation_Softmax()
+        self.loss = Loss_CategoricalCrossentropy()
+
+    # 注意：Activation_Softmax_Loss_CategoricalCrossentropy类中是调用forward计算loss
+    # 因为它没有继承Loss类
+    def forward(self, input, y_true):
+        self.activation.forward(input)
+        # 该类的output属性应该是Activation_Softmax()的输出
+        self.output = self.activation.output
+        # 该类返回的是loss
+        return self.loss.calculate(self.output, y_true)
+
+    # 其实y_pred一定等于self.output，但为了与之前代码一致
+    def backward(self, y_pred, y_true):
+        # 样本个数
+        n_sample = len(y_true)
+        if len(y_true.shape) == 2: # onehot编码
+            # 直接套公式
+            self.dinput = y_pred - y_true
+        elif len(y_true.shape) == 1: # 只有一个类别
+            self.dinput = y_pred.copy()
+            # 需将每一行中y_true类别（索引）中的-1，其它-0（不操作）
+            self.dinput[range(n_sample), y_true] -= 1
+        # 每个样本除以n_sample，因为在优化的过程中要对样本求和
+        self.dinput = self.dinput / n_sample
+
+class Activation_Sigmoid_Loss_BinaryCrossentropy():
+    def __init__(self):
+        self.activation = Activation_Sigmoid()
+        self.loss = Loss_BinaryCrossentropy()
+
+    def forward(self, input, y_true):
+        self.activation.forward(input)
+        # 类的output是Sigmoid的输出
+        self.output = self.activation.output
+        return self.loss.calculate(self.output, y_true)
+
+    def backward(self, y_pred, y_true):
+        # 样本数量
+        n_sample = len(y_pred)
+        # 这里要特别注意，书上都没有写明
+        # 当只有一对二进制类别时，y_pred大小为(n_sample,1),y_ture大小为(n_sample,)
+        # (n_sample,)和(n_sample,1)一样都可以广播，只是(n_sample,)不能转置
+        # 所以下面的loss大小会变成(n_sample,n_sample)
+        # 当有二对二进制类别时，y_pred大小为(n_sample,2),y_ture大小为(n_sample,2)
+        if len(y_true.shape) == 1:  # y_true是个行向量
+            y_true = y_true.reshape(-1, 1)
+        # 二进制输出个数
+        J = len(y_pred[0])
+        # y_true中每一行都有J个1或0的二进制值，1代表正例，0代表负例。
+        self.dinput = ( y_pred - y_true ) / J
+
+        # 优化时要将所有样本相加，为了梯度与样本数量无关，这里除以样本数
+        self.dinput /= n_sample
+
+
+##########################################
+# 数据
+X, y = spiral_data(samples=100,classes=2)
+
+
+# 两层Dense，一层ReLu
 dense1 = Layer_Dense(2,4)
-# 构建ReLu激活函数
+dense2 = Layer_Dense(4,1)
 activation1 = Activation_ReLu()
-# 构建一个含4个神经元的Dense层实例
-dense2 = Layer_Dense(4,3)
-# 构建Softmax激活函数
-activation2 = Activation_Softmax()
-# 构建损失函数
-loss = Loss_CategoricalCrossentropy()
 
 # 前向传播
 dense1.forward(X)
 activation1.forward(dense1.output)
 dense2.forward(activation1.output)
-activation2.forward(dense2.output)
-dataloss = loss.calculate(activation2.output, y)
+sigmoid_in = dense2.output
 
-# 反向传播
-loss.backward(activation2.output, y)
-activation2.backward(loss.dinput)
-print(activation2.dinput)
+# 前向传播
+####
+##
+sigmoid_loss = Activation_Sigmoid_Loss_BinaryCrossentropy()
+dataloss1 = sigmoid_loss.forward(sigmoid_in, y)
+##
+activation2 = Activation_Sigmoid()
+loss = Loss_BinaryCrossentropy()
+activation2.forward(sigmoid_in)
+dataloss2 = loss.calculate(activation2.output, y)
+##
+####
 
-# 输出结果
-print('loss =',dataloss)
+# # 反向传播
+# ####
+# ##
+# sigmoid_loss.backward(sigmoid_loss.output, y)
+# dinput1 = sigmoid_loss.dinput
+# ##
+# loss.backward(activation2.output, y)
+# activation2.backward(loss.dinput)
+# dinput2 = activation2.dinput
+#
+# print('Gradients: combined loss and activation:')
+# print(dataloss1)
+# print(dinput1.shape)
+# print(dinput1[50:55])
+#
+# print('Gradients: separate loss and activation:')
+# print(dataloss2)
+# print(dinput2.shape)
+# print(dinput2[50:55])
+# ##
+# ####
 
-# 计算正确率
-soft_output = activation2.output
-# 返回最大confidence的类别作为预测类别
-prediction = np.argmax(soft_output,axis=1)
-# 如果y是onehot编码
-if len(y.shape) == 2:
-    # 将其变为只有一个标签类别
-    y = np.argmax(y,axis=1)
-
-accuracy = np.mean(prediction == y)
-print("accurcy =",accuracy)
 
 
+def f1():
+    sigmoid_loss.backward(sigmoid_loss.output, y)
+    dinput1 = sigmoid_loss.dinput
+def f2():
+    loss.backward(activation2.output, y)
+    activation2.backward(loss.dinput)
+    dinput2 = activation2.dinput
 
-
-
+t1 = timeit(lambda: f1(), number=10000)
+t2 = timeit(lambda: f2(), number=10000)
+print(t2/t1)
 
 
 
