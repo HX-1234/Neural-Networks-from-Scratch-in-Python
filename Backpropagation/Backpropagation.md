@@ -194,26 +194,29 @@ $$
 **实现**
 
 ```python
-def backward(self, dvalue):
-    # input和output大小相同都为1xa，
-    # loss是标量，那么dinput和doutput（即dvalue）大小相同都为1xa，
-    # output对input的导数为一个axa的方阵
+    def backward(self, dvalue):
+        # input和output大小相同都为1xa，
+        # loss是标量，那么dinput和doutput（即dvalue）大小相同都为1xa，
+        # output对input的导数为一个axa的方阵
 
-    # 相同大小的空矩阵
-    self.dinput = np.empty_like(dvalue)
-    # 对每个samlpe（每一行）循环
-    for each, (single_output, single_dvalue) in enumerate(zip(self.output, dvalue)):
-        # 显然这两种计算法算到的dinput大小是一样的
-        # 这里是(1xa) * (axa) = 1xa是行向量
-        self.dinput[each] = np.dot(single_dvalue,
-                            np.diagflat(single_output)-np.dot(single_output.T,single_output))
-        # 这里是(axa) * (1xa).T = ax1是个列向量
-        # 但np默认会将列向量变为行向量，注意这里是列向量而不是列矩阵
-        # self.dinput[each] = np.dot(
-        #                             np.diagflat(single_output) -
-        #                             np.dot(single_output.T, single_output),
-        #                             single_dvalue.T
-        #                             )
+        # 相同大小的空矩阵
+        self.dinput = np.empty_like(dvalue)
+        # 对每个samlpe（每一行）循环
+        for each, (single_output, single_dvalue) in enumerate(zip(self.output, dvalue)):
+            # 显然这两种计算法算到的dinput大小是一样的
+            # 这里是(1xa) * (axa) = 1xa是行向量
+            # 这里要先将1xa向量变为1xa矩阵
+            # 因为向量没有转置（.T操作后还是与原来相同），
+            # np.dot接收到向量后，会调整向量的方向，但得到的还是向量（行向量）,就算得到列向量也会表示成行向量
+            # np.dot接收到1xa矩阵后，要考虑前后矩阵大小的匹配，不然要报错,最后得到的还是矩阵
+            single_output = single_output.reshape(1, -1)
+            jacobian_matrix = np.diagflat(single_output) - np.dot(single_output.T,single_output)
+            # 因为single_dvalue是行向量，dot运算会调整向量的方向
+            # 所以np.dot(single_dvalue, jacobian_matrix)和np.dot(jacobian_matrix， single_dvalue)
+            # 得到的都是一个行向量，但两都的计算方法不同，得到的值也不同
+            # np.dot(jacobian_matrix, single_dvalue)也是对的，这样得到的才是行向量，
+            # 而不是经过dot将列向量转置成行向量
+            self.dinput[each] = np.dot(jacobian_matrix, single_dvalue)
 ```
 
 ### 五、Sigmoid
