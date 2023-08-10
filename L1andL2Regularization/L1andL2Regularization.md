@@ -67,7 +67,7 @@ class Loss:
 
 > Loss类中要有反回regularization_loss的方法
 
-## 三、反向转播
+## 三、反向传播
 
 ### 一、公式
 
