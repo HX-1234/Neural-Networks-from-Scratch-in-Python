@@ -1,15 +1,27 @@
 """
 作者：黄欣
-日期：2023年08月11日
+日期：2023年08月14日
 """
-
-# 本版本实现对回归的解决方法
-
+import copy
+import os
+import pickle
+from zipfile import ZipFile
+import cv2
 import numpy as np
 from nnfs.datasets import spiral_data
 from nnfs.datasets import sine_data
 import matplotlib.pyplot as plt
+import nnfs
+import urllib.request
 
+
+
+class Layer_Input:
+    def __init__(self):
+        pass
+
+    def forward(self, input):
+        self.output = input
 
 class Layer_Dense:
     def __init__(self, n_input, n_neuron, weight_L1=0., weight_L2=0., bias_L1=0., bias_L2=0.):
@@ -22,6 +34,14 @@ class Layer_Dense:
         self.weight_L2 = weight_L2
         self.bias_L1 = bias_L1
         self.bias_L2 = bias_L2
+
+    def get_paramter(self):
+        return self.weight, self.bias
+
+    def set_paramter(self, weight, bias):
+        self.weight = weight
+        self.bias = bias
+
 
     def forward(self, input):
         # 因为要增加backward方法，
@@ -78,6 +98,12 @@ class Activation_Sigmoid:
     def __init__(self):
         pass
 
+    # prediction方法输出预测类别（分类）
+    def prediction(self, output):
+        # output > 0.5反回的是二进制值
+        # 乘1变成数值
+        return ( output > 0.5 ) * 1
+
     def forward(self, input):
         self.input = input
 
@@ -110,6 +136,10 @@ class Activation_ReLu:
 class Activation_Softmax:
     def __init__(self):
         pass
+
+    # prediction方法输出预测类别（分类）
+    def prediction(self, output):
+        return np.argmax(output, axis=1, keepdims=True)
 
     def forward(self, input):
         self.input = input
@@ -150,6 +180,10 @@ class Activation_Linear:
     def __init__(self):
         pass
 
+    # prediction方法输出值（回归）
+    def prediction(self, output):
+        return output
+
     def forward(self, input):
         self.input = input
         self.output = self.input
@@ -165,26 +199,57 @@ class Loss:
     def __init__(self):
         pass
 
-    # 统一通过调用calculate方法计算损失
-    def calculate(self, y_pred, y_ture):
-        # 对于不同的损失函数，通过继承Loss父类，并实现不同的forward方法。
-        data_loss = np.mean(self.forward(y_pred, y_ture))
-        # 注意，这里计算得到的loss不作为类属性储存，而是直接通过return返回
-        return data_loss
+    # 在求loss时需要知参别些层里面有可以训练参数，可以正则化
+    def save_trainable_layer(self, trainable_layer):
+        self.trainable_layer = trainable_layer
 
-    def regularization_loss(self, layer):
+    # 统一通过调用calculate方法计算损失
+    def calculate(self, y_pred, y_ture, *, add_regular_loss=False):
+        # 对于不同的损失函数，通过继承Loss父类，并实现不同的forward方法。
+        sample_loss = self.forward(y_pred, y_ture)
+        data_loss = np.mean(sample_loss)
+        # 加入了batch，所以要计算累计的损失和已训练过的样本数
+        self.cumulate_dataloss += np.sum(sample_loss)
+        self.cumulate_num += len(sample_loss)
+
+        # 在加入正则代码后，可以求得正则损失
+        # 注意之前版本调用regularization_loss(layer)
+        # 但这个版本有了self.trainable_layer，可直接找到Dense层（有参数）
+        regularization_loss = self.regularization_loss()
+        if not add_regular_loss:
+            # 在测试模型性能时只关心data_loss
+            regularization_loss = 0
+        # 注意，这里计算得到的loss不作为类属性储存，而是直接通过return返回
+        return data_loss, regularization_loss
+
+    def calculate_cumulate(self, *, add_regularization=False):
+
+        # 返回平均损失
+        data_loss = self.cumulate_dataloss / self.cumulate_num
+
+        regularization_loss = 0
+        if add_regularization:
+            regularization_loss = self.regularization_loss()
+        return data_loss, regularization_loss
+
+    def clean_cumulate(self):
+        self.cumulate_dataloss = 0
+        self.cumulate_num = 0
+
+    def regularization_loss(self):
         # 默认为0
         regularization_loss = 0
-        # 如果存在L1的loss
-        if layer.weight_L1 > 0:
-            regularization_loss += layer.weight_L1 * np.sum(np.abs(layer.weight))
-        if layer.bias_L1 > 0:
-            regularization_loss += layer.bias_L1 * np.sum(np.abs(layer.bias))
-        # 如果存在L2的loss
-        if layer.weight_L2 > 0:
-            regularization_loss += layer.weight_L2 * np.sum(layer.weight ** 2)
-        if layer.bias_L2 > 0:
-            regularization_loss += layer.bias_L2 * np.sum(layer.bias ** 2)
+        for layer in self.trainable_layer:
+            # 如果存在L1的loss
+            if layer.weight_L1 > 0:
+                regularization_loss += layer.weight_L1 * np.sum(np.abs(layer.weight))
+            if layer.bias_L1 > 0:
+                regularization_loss += layer.bias_L1 * np.sum(np.abs(layer.bias))
+            # 如果存在L2的loss
+            if layer.weight_L2 > 0:
+                regularization_loss += layer.weight_L2 * np.sum(layer.weight ** 2)
+            if layer.bias_L2 > 0:
+                regularization_loss += layer.bias_L2 * np.sum(layer.bias ** 2)
 
         return regularization_loss
 
@@ -240,8 +305,8 @@ class Loss_BinaryCrossentropy(Loss):
         # 为了防止log(0)，所以以1e-7为左边界
         # 另一个问题是将置信度向1移动，即使是非常小的值，
         # 为了防止偏移，右边界为1 - 1e-7
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
-        loss = -  np.log(y_pred) * y_true - np.log(1 - y_pred) * (1 - y_true)
+        y_pred_clip = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        loss = - ( np.log(y_pred_clip) * y_true + np.log(1 - y_pred_clip) * (1 - y_true) )
         # 这里的求平均和父类中的calculate求平均的维度不同
         # 这里是对多对的二进制求平均
         # calculate中的求平均是对每个样本可平均
@@ -260,6 +325,8 @@ class Loss_BinaryCrossentropy(Loss):
         # 当有二对二进制类别时，y_pred大小为(n_sample,2),y_ture大小为(n_sample,2)
         if len(y_true.shape) == 1:  # y_true是个行向量
             y_true = y_true.reshape(-1, 1)
+        if len(y_true.shape) == 2 and y_true.shape[0] == 1:
+            y_true = y_true.reshape(-1, 1)
         # 注意：BinaryCrossentropy之前都是Sigmoid函数
         # Sigmoid函数很容易出现0和1的输出
         # 所以以1e-7为左边界
@@ -269,10 +336,9 @@ class Loss_BinaryCrossentropy(Loss):
         # 千万不要与成下面这样，因为-y_true优先级最高，而y_true是uint8，-1=>255
         # 这个bug我找了很久，要重视
         # self.dinput = -y_true / y_pred_clip + (1 - y_true) / (1 - y_pred_clip)) / n_output
-        self.dinput = -(y_true / y_pred_clip - (1 - y_true) / (1 - y_pred_clip)) / n_output
+        self.dinput = -( y_true / y_pred_clip - (1 - y_true) / (1 - y_pred_clip)) / n_output
         # 每个样本除以n_sample，因为在优化的过程中要对样本求和
         self.dinput = self.dinput / n_sample
-
 
 class Activation_Softmax_Loss_CategoricalCrossentropy():
     def __init__(self):
@@ -514,95 +580,488 @@ class Dropout():
         # rate是断开连接的概率
         self.rate = 1 - rate
 
-    def forward(self, input):
+    def forward(self, input, drop_on=True):
         self.input = input
         # 按概率生成一个0、1矩阵
         # 因为1的概率只有rate这么大，就要除以rate偿损失值
+        if not drop_on:
+            # 如果关上dropout就输出等于输入
+            self.output = self.input
+            print('这里没有dropout')
+            return
         self.mask = np.random.binomial(1, self.rate, size=self.input.shape) / self.rate
         self.output = self.input * self.mask
 
     def backward(self,dvalue):
         self.dinput = dvalue * self.mask
 
+class Model():
+    def __init__(self):
+        # 这个属性用来存模型的每层结构
+        self.layer = []
+        # 先初始化为None，后面会在finalize中判断是否符合softmax+categoricalCrossentropy或sigmiod+binaryCrossentropy
+        self.softmax_categoricalCrossentropy = None
+        self.sigmoid_binaryCrossentropy = None
+
+    # 用来加入层结构
+    def add(self, layer):
+        self.layer.append(layer)
+
+    # 用来设置损失loss的类型、优化器等
+    # 在星号之后的所有参数都必须作为关键字参数传递，而不能作为位置参数传递
+    def set(self, *, loss, optimizer, accuracy):
+        self.loss = loss
+        self.optimizer = optimizer
+        self.accuracy = accuracy
+
+    def predict(self, X, *, batch_size=None ):
+        predict_step = 1
+        if batch_size is not None:
+            predict_step = len(X) // batch_size
+            if predict_step * batch_size < len(X):
+                predict_step += 1
+
+        output = []
+
+        for step in range( predict_step ):
+            if batch_size is None:
+                X_batch = X
+            else:
+                X_batch = X[step*batch_size:(step+1)*batch_size]
+            output_batch = self.forward(X_batch, dropout=False)
+            output.append(output_batch)
+
+        return np.vstack(output)
+
+    def evaluate(self, X_val, y_val, *, batch_size=None):
+        # 默认只有一个batch
+        validation_step = 1
+        if batch_size is not None:
+            validation_step = len(X_val) // batch_size
+            if validation_step * batch_size < len(X_val):  # 如果有余数
+                validation_step += 1
+        # 清除0
+        self.loss.clean_cumulate()
+        self.accuracy.clean_cumulate()
+
+        for step in range(validation_step):
+            # 没置batch
+            if not batch_size:
+                X_batch = X_val
+                y_batch = y_val
+            else:  # 这里有一个很好的性质，当(step+1)*batch_size超过X长度，则自动到最后为止。
+                X_batch = X_val[step * batch_size:(step + 1) * batch_size]
+                y_batch = y_val[step * batch_size:(step + 1) * batch_size]
+
+            # 输出层的输出
+            output = self.forward(X_batch, False)
+            # 计算loss
+            data_loss, regularization_loss = self.loss.calculate(output, y_batch)
+            loss = data_loss + regularization_loss
+            # 预测类别或预测值
+            prediction = self.output_layer.prediction(output)
+            # 计算准确率
+            accuracy = self.accuracy.calculate(prediction, y_batch)
+        # 平均精度和损失
+        validation_accuracy = self.accuracy.calculate_cumulate()
+        validation_data_loss, validation_regularizaion_loss = self.loss.calculate_cumulate()
+        validation_loss = validation_regularizaion_loss + validation_data_loss
+        # 测试输出,输出的是在测试集上的平均表现
+        print(f'validation, ' +
+              f'acc: {validation_accuracy:.3f}, ' +
+              f'loss: {validation_loss:.3f}')
+        # plt.plot(X_val, y_val)
+        # plt.plot(X_val, output)
+        # plt.show()
+
+    def get_paramter(self):
+        paramter = []
+        for layer in self.trainable_layer:
+            paramter.append(layer.get_paramter())
+        return paramter
+
+    def set_paramter(self, paramter):
+        for paramter_set, layer in zip(paramter, self.trainable_layer):
+            layer.set_paramter(*paramter_set)
+
+    def save_paramter(self, path):
+        with open(path, 'wb') as f:
+            pickle.dump(self.get_paramter(), f)
+
+    def load_paramter(self, path):
+        with open(path, 'rb') as f:
+            self.set_paramter(pickle.load(f))
+
+    def save_Model(self,path):
+        model = copy.deepcopy(self)
+
+        # 删除无关参数，减小模型大小
+        # 减少模型文件的大小并提高保存和加载模型的效率
+        model.loss.clean_cumulate()
+        model.accuracy.clean_cumulate()
+        model.input_layer.__dict__.pop('output', None)
+        model.loss.__dict__.pop('dinput',None)
+
+        for layer in model.layer:
+            for property in ['input','output','dinput','dweight','dbias']:
+                layer.__dict__.pop(property, None)
+
+        with open(path, 'wb') as f:
+            pickle.dump(model,f)
+
+    # 不需要先实例化一个模型对象就能调用load方法
+    @staticmethod
+    def load_Model(path):
+        with open(path, 'rb') as f:
+            model = pickle.load(f)
+        return model
 
 
-# 生成数据共1000个点
-X, y = sine_data()
-X_test = X[::2]
-y_test = y[::2]
-X = X[1::2]
-y = y[1::2]
+    # 训练模型
+    # epochs训练轮数
+    # print_every每多少轮输出一次
+    def train(self, X, y, *, epochs=1, print_every=1, batch_size=None, validation_data=None):
+        # 数据集(默认)分为1个batch
+        train_step = 1
+
+        # 非默认情况
+        if batch_size is not None:
+            train_step = len(X) // batch_size
+            if train_step * batch_size < len(X): # 如果有余数
+                train_step += 1
+
+        # 注意：validation_data需要输入一个元组，包括X、y
+        for epoch in range(1, epochs+1):
+            print(f'epoch:{epoch}')
+            # 清累积
+            self.loss.clean_cumulate()
+            self.accuracy.clean_cumulate()
+
+            for step in range(train_step):
+                # 没置batch
+                if not batch_size:
+                    X_batch = X
+                    y_batch = y
+                else: # 这里有一个很好的性质，当(step+1)*batch_size超过X长度，则自动到最后为止。
+                    X_batch = X[step*batch_size:(step+1)*batch_size]
+                    y_batch = y[step*batch_size:(step+1)*batch_size]
+
+                # 前向传播
+                output = self.forward(X_batch)
+                # 计算损失
+                data_loss, regularization_loss = self.loss.calculate(output, y_batch, add_regular_loss=True)
+                # 总loss
+                loss = data_loss + regularization_loss
+                # 计算预测值或预测类别
+                prediction = self.output_layer.prediction(output)
+                # 计算准确率
+                accuracy = self.accuracy.calculate(prediction, y_batch)
+
+                # 反向传播
+                self.backward(output, y_batch)
+
+                # 优化器进行优化
+                self.optimizer.pre_update_param()
+                for layer in self.trainable_layer:
+                    self.optimizer.update_param(layer)
+                self.optimizer.post_update_param()
+
+                # step中打印的是每次的真实值
+                if not step % print_every or step == train_step - 1:
+                    print(f'step: {step}, ' +
+                        f'acc: {accuracy:.3f}, ' +
+                        f'loss: {loss:.3f} (' +
+                        f'data_loss: {data_loss:.3f}, ' +
+                        f'reg_loss: {regularization_loss:.3f}), ' +
+                        f'lr: {self.optimizer.current_learning_rate}')
+
+            # 让epoch输出，输出每次epoch的平均值
+            epoch_data_loss, epoch_regularization_loss = \
+                self.loss.calculate_cumulate(add_regularization=True)
+            epoch_loss = epoch_regularization_loss + epoch_data_loss
+            epoch_accuracy = self.accuracy.calculate_cumulate()
+            # 输出信息，输出每次epoch的平均值
+            print(f'training {epoch}, ' +
+                f'acc: {epoch_accuracy:.3f}, ' +
+                f'loss: {epoch_loss:.3f} (' +
+                f'data_loss: {epoch_data_loss:.3f}, ' +
+                f'reg_loss: {epoch_regularization_loss:.3f}), ' +
+                f'lr: {self.optimizer.current_learning_rate}')
 
 
-# 三层结构
-dense1 = Layer_Dense(1, 64)
-activation1 = Activation_ReLu()
-dense2 = Layer_Dense(64, 64)# ,weight_L2=1e-4, bias_L2=1e-4
-activation2 = Activation_ReLu()
-dense3 = Layer_Dense(64, 1)
-activation3 = Activation_Linear()
-loss_function = Loss_MeanSquaredError()
-# 优化器
-optimizer = Optimizer_Adam(learning_rate = 0.001)
+            if validation_data is not None:
+                self.evaluate(*validation_data,batch_size=batch_size)
 
-# 精度标准
-accuracy_precision = np.std(y) / 250
+    ## 在该方法内实现模型的定型
+    # 1.确定不同层之间的前后次序
+    # 2.确定Dense层
+    # 3.将Dense层传入loss对象中，以计算正则损失
+    # 4.判断是否符合softmax+categoricalCrossentropy或sigmiod+binaryCrossentropy
+    def finalize(self):
+        # 创建输入层
+        self.input_layer = Layer_Input()
+        # 模型层数，不包括输入层、loss层
+        layer_num = len(self.layer)
+        # 存放Dense层（有参数可以学习）
+        self.trainable_layer = []
 
-for epoch in range(10001):
+        # 循环设置层间关系
+        for i in range(layer_num):
+            if i == 0:
+                # 第一层Dense,它的前一层是input_layer
+                self.layer[i].pre = self.input_layer
+                self.layer[i].next = self.layer[i + 1]
+            elif i == layer_num-1:
+                # 最后一个Dense，它是后一层是loss
+                self.layer[i].pre = self.layer[i - 1]
+                self.layer[i].next = self.loss
+                # 在最后一层标记一下所用的输出层是什么Activation存在Model的属性中
+                self.output_layer = self.layer[i]
+            else:
+                self.layer[i].pre = self.layer[i-1]
+                self.layer[i].next = self.layer[i+1]
+
+            if hasattr(self.layer[i], 'weight'):
+                # 如果当前层有'weight'属性，说是当前层是Dense层
+                # 该层是可以训练的
+                self.trainable_layer.append(self.layer[i])
+
+        # 把Dense层告诉loss对象
+        self.loss.save_trainable_layer(self.trainable_layer)
+        # 判断是否符合softmax+categoricalCrossentropy或sigmiod+binaryCrossentropy
+        if isinstance(self.layer[-1], Activation_Softmax) and \
+                isinstance(self.loss, Loss_CategoricalCrossentropy):
+            self.softmax_categoricalCrossentropy = Activation_Softmax_Loss_CategoricalCrossentropy()
+
+        if isinstance(self.layer[-1], Activation_Sigmoid) and \
+                isinstance(self.loss, Loss_BinaryCrossentropy):
+            self.sigmoid_binaryCrossentropy = Activation_Sigmoid_Loss_BinaryCrossentropy()
+
     # 前向传播
-    dense1.forward(X)
-    activation1.forward(dense1.output)
-    dense2.forward(activation1.output)
-    activation2.forward(dense2.output)
-    dense3.forward(activation2.output)
-    activation3.forward(dense3.output)
-    data_loss = loss_function.calculate(activation3.output, y)
+    # 该方法将在train方法中调用（训练过程将调用很多种方法，forward中是其中一个）
+    def forward(self, input, dropout=True):
+        self.input_layer.forward(input)
+        for layer in self.layer:
+            if isinstance(layer,Dropout) and (not dropout):
+                layer.forward(layer.pre.output,dropout)
+            else:
+                layer.forward(layer.pre.output)
 
-    regularization_loss = \
-        loss_function.regularization_loss(dense1) + \
-        loss_function.regularization_loss(dense2) + \
-        loss_function.regularization_loss(dense3)
+        # 这里的layer是最后一层的activation
+        return layer.output
 
-    loss = data_loss + regularization_loss
+    def backward(self, output, y_true):
+        if self.softmax_categoricalCrossentropy:
+            self.softmax_categoricalCrossentropy.backward(output, y_true)
+            # 最后一层是softmax,不调用backward求dinput,
+            # 因为softmax_categoricalCrossentropy已经算好
+            self.layer[-1].dinput = self.softmax_categoricalCrossentropy.dinput
+            # 注意：这里循环不包含最后一层（softmax）
+            for layer in reversed(self.layer[:-1]):
+                layer.backward(layer.next.dinput)
+            return
+        if self.sigmoid_binaryCrossentropy:
+            self.sigmoid_binaryCrossentropy.backward(output, y_true)
+            # 最后一层是sigmoid,不调用backward求dinput,
+            # 因为softmax_categoricalCrossentropy已经算好
+            self.layer[-1].dinput = self.sigmoid_binaryCrossentropy.dinput
+            # 注意：这里循环不包含最后一层（softmax）
+            for layer in reversed(self.layer[:-1]):
+                layer.backward(layer.next.dinput)
+            return
 
+        self.loss.backward(output, y_true)
+        # 注意：这里用的不是self.trainable_layer
+        for layer in reversed(self.layer):
+            layer.backward(layer.next.dinput)
+
+class Accuracy:
     # 计算准确率
-    predictions = activation3.output
-    accuracy = np.mean(np.absolute(predictions - y) <
-                       accuracy_precision)
+    def calculate(self, prediction, y_true):
+        # 获得比较结果
+        comparision = self.compare(prediction, y_true)
+        # 计算准确率
+        accuracy = np.mean(comparision)
+        # 加入了累积精度属性
+        self.cumulate_dataloss += np.sum(comparision)
+        self.cumulate_num += len(comparision)
 
-    if not epoch % 100:
-        print(f'epoch: {epoch}, ' +
-            f'acc: {accuracy:.3f}, ' +
-            f'loss: {loss:.3f} (' +
-            f'data_loss: {data_loss:.3f}, ' +
-            f'reg_loss: {regularization_loss:.3f}), ' +
-            f'lr: {optimizer.current_learning_rate}')
-    # 反向传播
-    loss_function.backward(activation3.output, y)
-    activation3.backward(loss_function.dinput)
-    dense3.backward(activation3.dinput)
-    activation2.backward(dense3.dinput)
-    dense2.backward(activation2.dinput)
-    activation1.backward(dense2.dinput)
-    dense1.backward(activation1.dinput)
+        return accuracy
 
-    # 更新权重
-    optimizer.pre_update_param()
-    optimizer.update_param(dense1)
-    optimizer.update_param(dense2)
-    optimizer.update_param(dense3)
-    optimizer.post_update_param()
+    def calculate_cumulate(self):
+        # 平均精度
+        accuracy = self.cumulate_dataloss / self.cumulate_num
+        return accuracy
 
-# 测试集
+    def clean_cumulate(self):
+        self.cumulate_dataloss = 0
+        self.cumulate_num = 0
+
+class Accuracy_Regresion(Accuracy):
+    def __init__(self):
+        # 创建一个属性，保存精度
+        # 因为对于Regresion，要自己先创建一个精度标准
+        self.precision = None
+
+    def compare(self, precision, y_true):
+        if self.precision is None:
+            self.precision = np.std(y_true) / 250
+        return np.abs(precision - y_true) < self.precision
+
+class Accuracy_Classification(Accuracy):
+    def __init__(self):
+        pass
+
+    def compare(self, precision, y_true):
+        # onehot编码
+        if len(y_true.shape) == 2:
+            # 改成单个类别
+            y_true = np.argmax(y_true,axis=1) #此时是行向量，可能用keepdims=保持矩阵
+        # 注意：prediction是一个矩阵，y_true是一个向量1xa
+        # 当矩阵是ax1时，会错误产生广播
+        # 非常重要，我以为是模型代码错了一天的bug，
+        # 最后发现可能只是正确率证算错误了
+        y_true = y_true.reshape(-1, 1)
+        compare = (precision == y_true) * 1
+        return compare
 
 
-dense1.forward(X_test)
-activation1.forward(dense1.output)
-dense2.forward(activation1.output)
-activation2.forward(dense2.output)
-dense3.forward(activation2.output)
-activation3.forward(dense3.output)
 
-plt.plot(X_test, y_test)
-plt.plot(X_test, activation3.output)
-plt.show()
+
+# 数据集下载地址
+URL = 'https://nnfs.io/datasets/fashion_mnist_images.zip'
+# 存放地址
+FILE = 'fashion_mnist_images.zip'
+# 解压地址
+FOLDER = 'fashion_mnist_images'
+# 将网上数据存在当前文件夹的FILE中
+# 如果本地没有文件，就下载
+if not os.path.isfile(FILE):
+    print(f'下载 {URL} 并存在 {FILE}...')
+    urllib.request.urlretrieve(URL, FILE)
+
+    print('解压文件')
+    with ZipFile(FILE) as zip_images:
+        zip_images.extractall(FOLDER)
+
+# image_data = cv2.imread('fashion_mnist_images/train/7/0002.png',cv2.IMREAD_UNCHANGED)
+# np.set_printoptions(linewidth=200)
+# print(image_data)
+#
+# plt.imshow(image_data, cmap='gray')
+# plt.show()
+
+
+# 加载MNIST dataset
+def load_mnist_dataset(dataset, path):
+
+    # 输入数据集的名称和地址
+    # 得到类文件
+    labels = os.listdir(os.path.join(path, dataset))
+    X = []
+    y = []
+
+    # 打开每个类文件夹
+    for label in labels:
+        # 循环其中每个文件
+        for file in os.listdir(os.path.join(path, dataset, label)):
+            # 读文件
+            image = cv2.imread(os.path.join(path, dataset, label, file), cv2.IMREAD_UNCHANGED)
+
+            # 存到list中
+            X.append(image)
+            y.append(label)
+
+    return np.array(X), np.array(y).astype('uint8')
+
+
+# 创建数据集，内部调用load_mnist_dataset
+def create_data_mnist(path):
+
+    # 加载训练和测试集
+    X, y = load_mnist_dataset('train', path)
+    X_test, y_test = load_mnist_dataset('test', path)
+
+    return X, y, X_test, y_test
+
+def data_preprocess():
+    X, y, X_test, y_test = create_data_mnist('D:/python_workplace/pycharm/workplace/NNFS_py38_NNFS/fashion_mnist_images')
+
+    # 归一化，让数据分布在[-1.1],利于训练
+    X = (X.astype(np.float32) - 127.5) / 127.5
+    X_test = (X_test.astype(np.float32) - 127.5) / 127.5
+
+    # 因为网络模一型是全连接网络，要将二维图片展成一维
+    X = X.reshape(X.shape[0],-1)
+    X_test = X_test.reshape(X_test.shape[0], -1)
+
+    # 打乱数据顺序
+    key = np.array(range(X.shape[0]))
+    np.random.shuffle(key)
+    X = X[key]
+    y = y[key]
+    key = np.array(range(X_test.shape[0]))
+    np.random.shuffle(key)
+    X_test = X_test[key]
+    y_test = y_test[key]
+
+    return X, y, X_test, y_test
+
+X, y, X_test, y_test = data_preprocess()
+print(X.shape, X_test.shape)
+
+
+model = Model()
+model.add(Layer_Dense(X.shape[1], 64, weight_L2=5e-4,bias_L2=5e-4))#,weight_L2=5e-4,bias_L2=5e-4
+model.add(Activation_ReLu())
+model.add(Layer_Dense(64, 64))
+model.add(Activation_ReLu())
+model.add(Layer_Dense(64, 10))
+model.add(Activation_Softmax())
+model.set(loss=Loss_CategoricalCrossentropy(),
+          optimizer=Optimizer_Adam(decay=5e-7),
+          accuracy=Accuracy_Classification())
+
+
+model.finalize()
+
+model.train(X, y, batch_size=100, validation_data=(X_test, y_test), epochs=5, print_every=10)
+model.evaluate(X_test, y_test, batch_size=10)
+# 反回各类别的概率
+confidence = model.predict(X_test[95:105])
+prediction = model.output_layer.prediction(confidence)
+
+print('预测分类：', prediction)
+print('ground truth：', y_test[95:105])
+
+model.save_Model('All_Model.model')
+model2 = Model.load_Model('All_Model.model')
+model2.evaluate(X_test, y_test, batch_size=10)
+
+# ###############################################################
+# # 重新加载新模型
+# # 获得参数
+# #paramter = model.get_paramter()
+# model.save_paramter('Mode_paramter.para')
+#
+# model = Model()
+# model.add(Layer_Dense(X.shape[1], 64, weight_L2=5e-4,bias_L2=5e-4))#,weight_L2=5e-4,bias_L2=5e-4
+# model.add(Activation_ReLu())
+# model.add(Layer_Dense(64, 64))
+# model.add(Activation_ReLu())
+# model.add(Layer_Dense(64, 10))
+# model.add(Activation_Softmax())
+# model.set(loss=Loss_CategoricalCrossentropy(),
+#           optimizer=Optimizer_Adam(decay=5e-7),
+#           accuracy=Accuracy_Classification())
+#
+# model.finalize()
+#
+#
+#
+# # 加载参数
+# #model.set_paramter(paramter)
+# model.load_paramter('Mode_paramter.para')
+#
+# model.evaluate(X_test, y_test, batch_size=10)
+# ##################################################################

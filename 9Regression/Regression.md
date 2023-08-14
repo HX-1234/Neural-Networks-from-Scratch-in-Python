@@ -53,10 +53,6 @@ accuracy = np.mean(np.absolute(predictions - y) < accuracy_precision)
 ```python
 # 生成数据共1000个点
 X, y = sine_data()
-keys = np.array(range(X.shape[0]))
-np.random.shuffle(keys)
-X = X[keys]
-y = y[keys]
 X_test = X[500:]
 y_test = y[500:]
 X = X[0:500]
@@ -136,8 +132,67 @@ plt.plot(X_test, activation3.output)
 plt.show()
 ```
 
-![image-20230811212118751](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308112121803.png)
+**参数1**
 
-![image-20230811212134474](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308112121521.png)
+~~~py
+optimizer = Optimizer_Adam(learning_rate=0.01, decay=1e-3)
+~~~
 
-橙色线是预测值，蓝色线是ground truth
+
+
+![image-20230812180329076](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308121803164.png)
+
+![image-20230812180354505](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308121803556.png)
+
+> 橙色线是预测值，蓝色线是ground truth，结果和书上一致。
+
+**参数2**
+
+```py
+optimizer = Optimizer_Adam(learning_rate = 0.001)
+```
+
+![image-20230812181150450](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308121811490.png)
+
+![image-20230812181259817](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308121812866.png)
+
+> 也与书上结果一致。
+
+
+
+```python
+optimizer = Optimizer_Adam(learning_rate=0.005, decay=1e-3)
+```
+
+![image-20230812180758284](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308121807322.png)
+
+![image-20230812180811512](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308121808560.png)
+
+> 结果也与书上一致，learning_rate=0.005是最优的参数，0.01和0.001效果都不好，在此之间取0.005有效果。可以看到，在很窄的参数取值才有效果。
+
+```python
+# 用正态分布初始化权重
+self.weight = 0.01 * np.random.randn(n_input, n_neuron)
+```
+
+**上面代码是Layer_Dense中初始化权重的代码。**
+
+可以参考Keras中的初始化实现。其中用了Glorot均匀初始化器，也称为Xavier均匀初始化器。它从一个均匀分布中抽取样本，范围在$[-limit, limit]$之间，其中$limit$`是`$\sqrt{6 / (n_{input} + n_{output})}$,$n_{input}$是权重张量中输入单元的数量，$n_{output}$是权重张量中输出单元的数量。简单来说，这种初始化方法可以根据权重张量的输入和输出单元数量来确定初始化范围，从而更好地初始化神经网络的权重。
+
+实际上在此时遇到了一个非常类似的问题，改变权重的初始化方式使模型从完全不学习到学习状态，但不按Glorot均匀初始化，只是在Layer_Dense中初始化权重的代码修改一下。 为了这个目的，将Dense层的权重初始化中乘以正态分布抽取的因子改为0.1。
+
+**参数3**
+
+~~~py
+self.weight = 0.1 * np.random.randn(n_input, n_neuron)
+~~~
+
+~~~py
+optimizer = Optimizer_Adam(learning_rate = 0.001)
+~~~
+
+![image-20230812185857352](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308121858409.png)
+
+![image-20230812185922887](https://raw.githubusercontent.com/HX-1234/NoteImage/main/202308121859937.png)
+
+> 将Dense层的权重初始化中乘以正态分布抽取的因子改为0.1后，用之前同样的参数训练效果还是很好。

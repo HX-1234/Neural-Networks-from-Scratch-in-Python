@@ -3,7 +3,9 @@
 日期：2023年08月10日
 """
 
-# 本版本将加入L1和L2正则化的实现
+from timeit import timeit
+
+# 版本增加了Optimizer的实现。
 
 import numpy as np
 from nnfs.datasets import spiral_data
@@ -11,16 +13,12 @@ import matplotlib.pyplot as plt
 
 
 class Layer_Dense:
-    def __init__(self, n_input, n_neuron, weight_L1=0., weight_L2=0., bias_L1=0., bias_L2=0.):
+    def __init__(self, n_input, n_neuron):
         # 用正态分布初始化权重
         self.weight = 0.01 * np.random.randn(n_input, n_neuron)
         # 将bias(偏差)初始化为0
         # self.bias = np.zeros(n_neuron)
         self.bias = np.zeros((1, n_neuron))
-        self.weight_L1 = weight_L1
-        self.weight_L2 = weight_L2
-        self.bias_L1 = bias_L1
-        self.bias_L2 = bias_L2
 
     def forward(self, input):
         # 因为要增加backward方法，
@@ -59,19 +57,6 @@ class Layer_Dense:
         # 但有更快更简单的实现
         self.dbias = np.sum(dvalue, axis=0, keepdims=True)  # 此处不要keepdims=True也行，因为按0维相加还是行向量
 
-        # 正则项的梯度
-        if self.weight_L2 > 0:
-            self.dweight += 2 * self.weight_L2 * self.weight
-        if self.bias_L2 > 0:
-            self.dbias += 2 * self.bias_L2 * self.bias
-        if self.weight_L1 > 0:
-            dL = np.ones_like(self.weight)
-            dL[self.weight < 0] = -1
-            self.dweight += self.weight_L1 * dL
-        if self.bias_L1 > 0:
-            dL = np.ones_like(self.bias)
-            dL[self.bias < 0] = -1
-            self.dbias += self.bias_L1 * dL
 
 class Activation_Sigmoid:
     def __init__(self):
@@ -157,21 +142,6 @@ class Loss:
         # 注意，这里计算得到的loss不作为类属性储存，而是直接通过return返回
         return data_loss
 
-    def regularization_loss(self, layer):
-        # 默认为0
-        regularization_loss = 0
-        # 如果存在L1的loss
-        if layer.weight_L1 > 0:
-            regularization_loss += layer.weight_L1 * np.sum(np.abs(layer.weight))
-        if layer.bias_L1 > 0:
-            regularization_loss += layer.bias_L1 * np.sum(np.abs(layer.bias))
-        # 如果存在L2的loss
-        if layer.weight_L2 > 0:
-            regularization_loss += layer.weight_L2 * np.sum(layer.weight ** 2)
-        if layer.bias_L2 > 0:
-            regularization_loss += layer.bias_L2 * np.sum(layer.bias ** 2)
-
-        return regularization_loss
 
 class Loss_CategoricalCrossentropy(Loss):
     def __init__(self):
@@ -235,7 +205,7 @@ class Loss_BinaryCrossentropy(Loss):
 
     def backward(self, y_pred, y_true):
         # 样本个数
-        n_sample = len(y_pred)
+        n_sample = len(y_true)
         # 二进制输出个数
         n_output = len(y_pred[0])
         # 这里要特别注意，书上都没有写明
@@ -319,7 +289,7 @@ class Activation_Sigmoid_Loss_BinaryCrossentropy():
 
 class Optimizer_SGD():
     # 初始化方法将接收超参数，从学习率开始，将它们存储在类的属性中
-    def __init__(self, learning_rate = 1.0, decay = 0., momentum=0):
+    def __init__(self, learning_rate = 1.0, decay = 0, momentum=0):
         self.learning_rate = learning_rate
         self.decay = decay
         self.current_learning_rate = learning_rate
@@ -364,7 +334,7 @@ class Optimizer_SGD():
 
 class Optimizer_Adagrad():
     # 初始化方法将接收超参数，从学习率开始，将它们存储在类的属性中
-    def __init__(self, learning_rate = 1.0, decay = 0., epsilon = 1e-7):
+    def __init__(self, learning_rate = 1.0, decay = 0, epsilon = 1e-7):
         self.learning_rate = learning_rate
         self.decay = decay
         self.current_learning_rate = learning_rate
@@ -396,7 +366,7 @@ class Optimizer_Adagrad():
 
 class Optimizer_RMSprop():
     # 初始化方法将接收超参数，从学习率开始，将它们存储在类的属性中
-    def __init__(self, learning_rate = 0.001, decay = 0., epsilon = 1e-7, beta = 0.9):
+    def __init__(self, learning_rate = 0.001, decay = 0, epsilon = 1e-7, beta = 0.9):
         # 注意：这里的学习率learning_rate = 0.001，不是默认为1
         self.learning_rate = learning_rate
         self.decay = decay
@@ -429,7 +399,7 @@ class Optimizer_RMSprop():
 
 class Optimizer_Adam():
     # 初始化方法将接收超参数，从学习率开始，将它们存储在类的属性中
-    def __init__(self, learning_rate = 0.001, decay = 0., epsilon = 1e-7, momentum = 0.9,beta = 0.999):
+    def __init__(self, learning_rate = 0.001, decay = 0, epsilon = 1e-7, momentum = 0.0,beta = 0.999):
         # 注意：这里的学习率learning_rate = 0.001，不是默认为1
         self.learning_rate = learning_rate
         self.decay = decay
@@ -476,29 +446,17 @@ class Optimizer_Adam():
 
 
 # 数据集
-X, y = spiral_data(samples=2000, classes=3)
-keys = np.array(range(X.shape[0]))
-np.random.shuffle(keys)
-X = X[keys]
-y = y[keys]
-X_test = X[3000:]
-y_test = y[3000:]
-X = X[0:3000]
-y = y[0:3000]
-print(X-X_test)
+X, y = spiral_data(samples=100, classes=3)
 
 # 2输入64输出
-dense1 = Layer_Dense(2, 256)#, weight_L2=5e-4, bias_L2=5e-4
+dense1 = Layer_Dense(2, 64)
 activation1 = Activation_ReLu()
-# 2输入64输出
-dense2 = Layer_Dense(256, 128)#, weight_L2=5e-4, bias_L2=5e-4
-activation2 = Activation_ReLu()
 # 64输入3输出
-dense3 = Layer_Dense(128, 3)
+dense2 = Layer_Dense(64, 3)
 loss_activation = Activation_Softmax_Loss_CategoricalCrossentropy()
 
 # 优化器
-optimizer = Optimizer_Adam(learning_rate=0.02, decay=5e-7)
+optimizer = Optimizer_Adam(learning_rate=0.05, decay=5e-7)
 
 # 循环10000轮
 for epoch in range(10001):
@@ -506,11 +464,8 @@ for epoch in range(10001):
     dense1.forward(X)
     activation1.forward(dense1.output)
     dense2.forward(activation1.output)
-    activation2.forward(dense2.output)
-    dense3.forward(activation2.output)
-    data_loss = loss_activation.forward(dense3.output, y)
-    regularization_loss = loss_activation.loss.regularization_loss(dense1) +loss_activation.loss.regularization_loss(dense2)
-    loss = data_loss + regularization_loss
+    loss = loss_activation.forward(dense2.output, y)
+
     # 最高confidence的类别
     predictions = np.argmax(loss_activation.output, axis=1)
     if len(y.shape) == 2: # onehot编码
@@ -520,18 +475,14 @@ for epoch in range(10001):
 
     if not epoch % 100:
         print(f'epoch: {epoch}, ' +
-              f'acc: {accuracy:.3f}, ' +
-              f'loss: {loss:.3f} (' +
-              f'data_loss: {data_loss:.3f}, ' +
-              f'reg_loss: {regularization_loss:.3f}), ' +
-              f'lr: {optimizer.current_learning_rate}'
+                f'acc: {accuracy:.3f}, ' +
+                f'loss: {loss:.3f}, '+
+                f'lr: {optimizer.current_learning_rate}'
                 )
 
     # 反向传播
     loss_activation.backward(loss_activation.output, y)
-    dense3.backward(loss_activation.dinput)
-    activation2.backward(dense3.dinput)
-    dense2.backward(activation2.dinput)
+    dense2.backward(loss_activation.dinput)
     activation1.backward(dense2.dinput)
     dense1.backward(activation1.dinput)
 
@@ -539,30 +490,4 @@ for epoch in range(10001):
     optimizer.pre_update_param()
     optimizer.update_param(dense1)
     optimizer.update_param(dense2)
-    optimizer.update_param(dense3)
     optimizer.post_update_param()
-
-
-
-# Create test dataset
-
-# Perform a forward pass of our testing data through this layer
-dense1.forward(X_test)
-# Perform a forward pass through activation function
-# takes the output of first dense layer here
-activation1.forward(dense1.output)
-# Perform a forward pass through second Dense layer
-# takes outputs of activation function of first layer as inputs
-dense2.forward(activation1.output)
-activation2.forward(dense2.output)
-dense3.forward(activation2.output)
-# Perform a forward pass through the activation/loss function
-# takes the output of second dense layer here and returns loss
-loss = loss_activation.forward(dense3.output, y_test)
-# Calculate accuracy from output of activation2 and targets
-# calculate values along first axis
-predictions = np.argmax(loss_activation.output, axis=1)
-if len(y_test.shape) == 2:
-    y_test = np.argmax(y_test, axis=1)
-accuracy = np.mean(predictions==y_test)
-print(f'validation, acc: {accuracy:.3f}, loss: {loss:.3f}')

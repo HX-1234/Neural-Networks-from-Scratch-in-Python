@@ -215,8 +215,6 @@ class Loss_BinaryCrossentropy(Loss):
         pass
 
     def forward(self, y_pred, y_true):
-        # 多少个样本
-        n_sample = len(y_true)
         # 这里要特别注意，书上都没有写明
         # 当只有一对二进制类别时，y_pred大小为(n_sample,1),y_ture大小为(n_sample,)
         # (n_sample,)和(n_sample,1)一样都可以广播，只是(n_sample,)不能转置
@@ -237,7 +235,9 @@ class Loss_BinaryCrossentropy(Loss):
 
     def backward(self, y_pred, y_true):
         # 样本个数
-        n_sample = len(y_true)
+        n_sample = len(y_pred)
+        # 二进制输出个数
+        n_output = len(y_pred[0])
         # 这里要特别注意，书上都没有写明
         # 当只有一对二进制类别时，y_pred大小为(n_sample,1),y_ture大小为(n_sample,)
         # (n_sample,)和(n_sample,1)一样都可以广播，只是(n_sample,)不能转置
@@ -250,8 +250,11 @@ class Loss_BinaryCrossentropy(Loss):
         # 所以以1e-7为左边界
         # 另一个问题是将置信度向1移动，即使是非常小的值，
         # 为了防止偏移，右边界为1 - 1e-7
-        y_pred = np.clip(y_pred, 1e-7, 1 - 1e-7)
-        self.dinput = - y_true / y_pred + (1 - y_true) / (1 - y_pred)
+        y_pred_clip = np.clip(y_pred, 1e-7, 1 - 1e-7)
+        # 千万不要与成下面这样，因为-y_true优先级最高，而y_true是uint8，-1=>255
+        # 这个bug我找了很久，要重视
+        # self.dinput = -y_true / y_pred_clip + (1 - y_true) / (1 - y_pred_clip)) / n_output
+        self.dinput = -(y_true / y_pred_clip - (1 - y_true) / (1 - y_pred_clip)) / n_output
         # 每个样本除以n_sample，因为在优化的过程中要对样本求和
         self.dinput = self.dinput / n_sample
 
@@ -486,22 +489,6 @@ class Dropout():
     def backward(self,dvalue):
         self.dinput = dvalue * self.mask
 
-
-
-# 数据集
-X, y = spiral_data(samples=2000, classes=3)
-keys = np.array(range(X.shape[0]))
-np.random.shuffle(keys)
-X = X[keys]
-y = y[keys]
-X_test = X[3000:]
-y_test = y[3000:]
-X = X[0:3000]
-y = y[0:3000]
-print(X-X_test)
-
-
-
 # 2输入64输出
 dense1 = Layer_Dense(2, 512, weight_L2=5e-4, bias_L2=5e-4)
 activation1 = Activation_ReLu()
@@ -514,6 +501,25 @@ loss_activation = Activation_Softmax_Loss_CategoricalCrossentropy()
 
 # 优化器
 optimizer = Optimizer_Adam(learning_rate=0.05, decay=5e-5)
+
+# 数据集
+X, y = spiral_data(samples=2000, classes=3)
+keys = np.array(range(X.shape[0]))
+# 千万要注意，这里的keys是输入
+# 不要写成key=np.random.shuffle(keys)
+np.random.shuffle(keys)
+X = X[keys]
+y = y[keys]
+X_test = X[3000:]
+y_test = y[3000:]
+X = X[0:3000]
+y = y[0:3000]
+#print(X-X_test)
+print(X[:5])
+print(X_test[:5])
+
+
+
 
 # 循环10000轮
 for epoch in range(10001):
@@ -557,7 +563,7 @@ for epoch in range(10001):
 
 
 
-# Create test dataset
+
 
 # Perform a forward pass of our testing data through this layer
 dense1.forward(X_test)
